@@ -20,10 +20,6 @@ terraform {
       source  = "hashicorp/tls"
       version = "~> 4.0"
     }
-    local = {
-      source  = "hashicorp/local"
-      version = "~> 2.5"
-    }
   }
 }
 
@@ -69,12 +65,9 @@ resource "aws_key_pair" "deploy" {
   public_key = tls_private_key.deploy.public_key_openssh
 }
 
-# Приватний ключ зберігається локально і НЕ комітиться: він у .gitignore.
-resource "local_sensitive_file" "private_key" {
-  filename        = "${path.module}/deploy_key.pem"
-  content         = tls_private_key.deploy.private_key_pem
-  file_permission = "0600"
-}
+# Приватний ключ не пишеться у файл ресурсом Terraform: на чистому раннері
+# такого файлу немає, а стан його вже містить. Замість цього ключ віддається
+# через output (sensitive) і записується у кроці деплою.
 
 # --------------------------------------------------------- security group ---
 resource "aws_security_group" "app" {
