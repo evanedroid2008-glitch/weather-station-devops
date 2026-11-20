@@ -102,10 +102,27 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.9.5"
+          terraform_version: "1.10.5"
+
+      # Бакет для стану створюється один раз і далі перевикористовується.
+      - name: Bootstrap state bucket
+        id: state
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET="weather-station-tfstate-${ACCOUNT_ID}"
+          echo "bucket=${BUCKET}" >> "$GITHUB_OUTPUT"
+          if ! aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            echo "Створення бакета ${BUCKET}"
+            aws s3api create-bucket --bucket "$BUCKET" --region eu-central-1 \
+              --create-bucket-configuration LocationConstraint=eu-central-1
+            aws s3api put-bucket-versioning --bucket "$BUCKET" \
+              --versioning-configuration Status=Enabled
+            aws s3api put-bucket-encryption --bucket "$BUCKET" \
+              --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+          fi
 
       - name: Terraform init
-        run: terraform init -input=false
+        run: terraform init -input=false -backend-config="bucket=${{ steps.state.outputs.bucket }}"
 
       - name: Terraform fmt check
         run: terraform fmt -check -recursive
