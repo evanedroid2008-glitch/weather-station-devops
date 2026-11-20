@@ -145,8 +145,7 @@ jobs:
       - name: Prepare SSH key
         run: |
           mkdir -p ~/.ssh
-          terraform output -raw ssh_private_key_path > /tmp/keypath
-          cp "$(cat /tmp/keypath)" ~/.ssh/deploy_key
+          terraform output -raw ssh_private_key_pem > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           for i in $(seq 1 30); do
             if ssh-keyscan -T 5 -H "${{ steps.tf.outputs.instance_ip }}" >> ~/.ssh/known_hosts 2>/dev/null; then
