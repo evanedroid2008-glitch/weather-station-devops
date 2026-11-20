@@ -1,5 +1,15 @@
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.10.0"
+
+  # Стан зберігається у S3, а не на раннері GitHub: інакше кожен запуск
+  # починається з порожнього стану і Terraform створює дублікати ресурсів.
+  # Ім'я бакета передається під час init: -backend-config="bucket=..."
+  backend "s3" {
+    key          = "weather-station/terraform.tfstate"
+    region       = "eu-central-1"
+    encrypt      = true
+    use_lockfile = true
+  }
 
   required_providers {
     aws = {
