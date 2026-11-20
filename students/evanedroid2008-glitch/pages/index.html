@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Weather Station</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Метеостанція</h1>
+      <p class="sub" id="subtitle">Дані з датчиків у реальному часі</p>
+    </header>
+
+    <section class="cards">
+      <article class="card">
+        <span class="label">Температура</span>
+        <strong id="avg-temp">--</strong>
+        <span class="unit">°C</span>
+      </article>
+      <article class="card">
+        <span class="label">Вологість</span>
+        <strong id="avg-humidity">--</strong>
+        <span class="unit">%</span>
+      </article>
+      <article class="card">
+        <span class="label">Тиск</span>
+        <strong id="avg-pressure">--</strong>
+        <span class="unit">гПа</span>
+      </article>
+      <article class="card">
+        <span class="label">Вимірювань</span>
+        <strong id="count">0</strong>
+        <span class="unit">записів</span>
+      </article>
+    </section>
+
+    <section class="panel">
+      <h2>Додати вимірювання</h2>
+      <form id="form">
+        <label>Температура, °C
+          <input type="number" step="0.1" name="temperature" value="21.5" required>
+        </label>
+        <label>Вологість, %
+          <input type="number" step="1" name="humidity" value="48" required>
+        </label>
+        <label>Тиск, гПа
+          <input type="number" step="0.1" name="pressure" value="1013" required>
+        </label>
+        <label>Станція
+          <input type="text" name="station" value="lab-1" maxlength="40">
+        </label>
+        <button type="submit">Надіслати</button>
+      </form>
+      <p class="status" id="status"></p>
+    </section>
+
+    <section class="panel">
+      <h2>Останні вимірювання</h2>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>Час</th><th>°C</th><th>%</th><th>гПа</th><th>Станція</th></tr>
+        </thead>
+        <tbody id="rows"><tr><td colspan="6" class="empty">Даних ще немає</td></tr></tbody>
+      </table>
+    </section>
+
+    <footer>
+      <span id="version">version: --</span>
+    </footer>
+  </main>
+
+  <script>
+    const rows = document.getElementById('rows');
+    const status = document.getElementById('status');
+
+    async function refresh() {
+      const [dataResponse, healthResponse] = await Promise.all([
+        fetch('/api/measurements'),
+        fetch('/health'),
+      ]);
+      const data = await dataResponse.json();
+      const health = await healthResponse.json();
+
+      document.getElementById('avg-temp').textContent = data.stats.temperature ?? '--';
+      document.getElementById('avg-humidity').textContent = data.stats.humidity ?? '--';
+      document.getElementById('avg-pressure').textContent = data.stats.pressure ?? '--';
+      document.getElementById('count').textContent = data.stats.count;
+      document.getElementById('version').textContent = 'version: ' + health.version;
+
+      if (data.items.length === 0) {
+        rows.innerHTML = '<tr><td colspan="6" class="empty">Даних ще немає</td></tr>';
+        return;
+      }
+      rows.innerHTML = data.items
+        .slice()
+        .reverse()
+        .map((item) => `<tr>
+          <td>${item.id}</td>
+          <td>${new Date(item.recordedAt).toLocaleString('uk-UA')}</td>
+          <td>${item.temperature}</td>
+          <td>${item.humidity}</td>
+          <td>${item.pressure}</td>
+          <td>${item.station}</td>
+        </tr>`)
+        .join('');
+    }
+
+    document.getElementById('form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const payload = {
+        temperature: Number(form.get('temperature')),
+        humidity: Number(form.get('humidity')),
+        pressure: Number(form.get('pressure')),
+        station: String(form.get('station') || ''),
+      };
+      const response = await fetch('/api/measurements', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json();
+      status.textContent = response.ok
+        ? `Збережено вимірювання #${result.id}`
+        : `Помилка: ${(result.errors || [result.error]).join('; ')}`;
+      await refresh();
+    });
+
+    refresh();
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>

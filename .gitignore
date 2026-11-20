@@ -1,0 +1,9 @@
+# Службовий файл репозиторію-шаблону
+.DS_Store
+Thumbs.db
+*.log
+node_modules/
+.terraform/
+*.tfstate
+*.pem
+.env

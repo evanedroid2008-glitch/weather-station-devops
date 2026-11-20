@@ -1,0 +1,189 @@
+# Копія робочого пайплайна з кореня репозиторію (.github/workflows/ci-cd.yml).
+# GitHub Actions читає лише workflows з кореня репозиторію, тому робочим
+# є файл у корені, а ця копія лежить у папці студента згідно зі структурою ТЗ.
+# Після зміни одного файлу його треба синхронізувати з другим.
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "students/evanedroid2008-glitch/**"
+      - ".github/workflows/ci-cd.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "students/evanedroid2008-glitch/**"
+  workflow_dispatch:
+
+env:
+  PROJECT_DIR: students/evanedroid2008-glitch
+  IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/weather-station
+
+jobs:
+  # ---------------------------------------------------------------- тести ---
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: students/evanedroid2008-glitch
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Run tests
+        run: npm test
+
+  # --------------------------------------------- збірка й пуш у Docker Hub ---
+  build-and-push:
+    name: Build and push image
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Compute image tag
+        id: meta
+        run: echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          # Контекст збірки дорівнює папці студента, тому Dockerfile бачить src/ і pages/.
+          context: students/evanedroid2008-glitch
+          file: students/evanedroid2008-glitch/Dockerfile
+          push: true
+          # Якщо Dockerfile лежить у підпапці, контекст має збігатися з ним.
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          echo "Pushed ${{ env.IMAGE_NAME }}:latest and :${{ steps.meta.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
+
+  # --------------------------------------- інфраструктура та деплой на EC2 ---
+  deploy:
+    name: Terraform and deploy
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: students/evanedroid2008-glitch/infra
+    env:
+      AWS_REGION: eu-central-1
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.5"
+
+      - name: Terraform init
+        run: terraform init -input=false
+
+      - name: Terraform fmt check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        run: terraform plan -input=false -out=tfplan
+
+      - name: Terraform apply
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Read infrastructure outputs
+        id: tf
+        run: |
+          echo "instance_ip=$(terraform output -raw instance_public_ip)" >> "$GITHUB_OUTPUT"
+          echo "app_url=$(terraform output -raw app_url)" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare SSH key
+        run: |
+          mkdir -p ~/.ssh
+          terraform output -raw ssh_private_key_path > /tmp/keypath
+          cp "$(cat /tmp/keypath)" ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          for i in $(seq 1 30); do
+            if ssh-keyscan -T 5 -H "${{ steps.tf.outputs.instance_ip }}" >> ~/.ssh/known_hosts 2>/dev/null; then
+              break
+            fi
+            sleep 5
+          done
+
+      - name: Wait for Docker on the instance
+        run: |
+          for i in $(seq 1 40); do
+            if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+                 "ubuntu@${{ steps.tf.outputs.instance_ip }}" 'docker --version'; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Docker не став на інстансі за відведений час" >&2
+          exit 1
+
+      - name: Deploy container
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "ubuntu@${{ steps.tf.outputs.instance_ip }}" bash -s <<REMOTE
+          set -euo pipefail
+          echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+          docker pull ${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
+          docker rm -f weather-station || true
+          docker run -d --name weather-station --restart unless-stopped \
+            -p 3000:3000 \
+            -e APP_VERSION=${{ needs.build-and-push.outputs.image_tag }} \
+            ${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
+          docker image prune -f
+          REMOTE
+
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 20); do
+            if curl -fsS "http://${{ steps.tf.outputs.instance_ip }}:3000/health"; then
+              echo
+              echo "Deployment is healthy" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Застосунок не відповів на /health" >&2
+          exit 1
+
+      - name: Deployment summary
+        run: |
+          echo "### Deployed" >> "$GITHUB_STEP_SUMMARY"
+          echo "- URL: ${{ steps.tf.outputs.app_url }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Image: ${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}" >> "$GITHUB_STEP_SUMMARY"

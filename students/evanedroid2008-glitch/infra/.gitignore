@@ -1,0 +1,10 @@
+# Стан Terraform і локальні файли ніколи не комітяться
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+terraform.tfvars
+*.auto.tfvars
+deploy_key.pem
+deploy_key.pub

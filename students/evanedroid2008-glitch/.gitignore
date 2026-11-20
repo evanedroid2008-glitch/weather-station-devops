@@ -1,0 +1,38 @@
+# Залежності
+node_modules/
+npm-debug.log*
+
+# Terraform: стан і локальний кеш ніколи не комітяться
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+crash.log
+.terraform.lock.hcl.bak
+
+# Секрети та ключі
+*.pem
+*.key
+*.p12
+.env
+.env.*
+!.env.example
+terraform.tfvars
+*.auto.tfvars
+!terraform.tfvars.example
+
+# Плани Terraform містять значення секретів
+*.tfplan
+plan.out
+
+# Локальні артефакти
+coverage/
+dist/
+*.log
+.DS_Store
+Thumbs.db
+
+# IDE
+.vs/
+.vscode/
+.idea/

@@ -1,0 +1,14 @@
+.git
+.github
+infra
+test
+*.md
+.gitignore
+.dockerignore
+node_modules
+npm-debug.log
+.terraform
+*.tfstate
+*.tfstate.*
+*.pem
+.env
